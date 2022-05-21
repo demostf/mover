@@ -2,7 +2,7 @@ use demostf_client::{ApiClient, ListOrder, ListParams};
 use main_error::MainError;
 use md5::Context;
 use std::collections::HashMap;
-use std::fs::{rename, File};
+use std::fs::{copy, create_dir_all, remove_file, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -65,8 +65,10 @@ async fn main() -> Result<(), MainError> {
         .await?;
 
     for demo in demos {
-        let source_path = generate_path(&source_root, &demo.name);
-        let target_path = generate_path(&target_root, &demo.name);
+        let name = demo.path.rsplit('/').next().unwrap();
+
+        let source_path = generate_path(&source_root, name);
+        let target_path = generate_path(&target_root, name);
         let _span = info_span!(
             "name",
             demo = demo.id,
@@ -94,9 +96,24 @@ async fn main() -> Result<(), MainError> {
             return Ok(());
         }
 
-        rename(source_path, target_path)?;
+        create_dir_all(target_path.parent().unwrap())?;
+
+        copy(&source_path, &target_path)?;
+
+        let calculated_hash = hash(&target_path)?;
+
+        if calculated_hash != demo.hash {
+            error!(
+                calculated = debug(calculated_hash),
+                stored = debug(demo.hash),
+                "hash mismatch for target"
+            );
+            remove_file(&target_path)?;
+            return Ok(());
+        }
+
         info!("renamed");
-        client
+        if let Err(err) = client
             .set_url(
                 demo.id,
                 &target_backend,
@@ -105,7 +122,13 @@ async fn main() -> Result<(), MainError> {
                 calculated_hash,
                 &api_key,
             )
-            .await?;
+            .await
+        {
+            error!(error = display(&err), "error while setting url");
+            remove_file(&target_path)?;
+            return Err(err.into());
+        }
+        remove_file(source_path)?;
     }
 
     Ok(())
