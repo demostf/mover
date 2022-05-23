@@ -1,14 +1,15 @@
-use demostf_client::{ApiClient, ListOrder, ListParams};
+use demostf_client::{ApiClient, Demo, ListOrder, ListParams};
 use main_error::MainError;
 use md5::Context;
 use std::collections::HashMap;
-use std::fs::{copy, create_dir_all, remove_file, File};
+use std::fs::{copy, create_dir_all, remove_file, write, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 use time::OffsetDateTime;
-use tracing::{error, info, info_span};
+use tokio::time::timeout;
+use tracing::{error, info, info_span, instrument, warn};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -78,27 +79,26 @@ async fn main() -> Result<(), MainError> {
         .entered();
 
         if !source_path.is_file() {
-            error!("source not found");
-            return Ok(());
+            warn!("source not found, re-downloading");
+            re_download(&client, &target_path, &demo).await?;
         }
         if target_path.is_file() {
-            error!("target exists");
-            return Ok(());
+            warn!("target exists");
+        } else {
+            let calculated_hash = hash(&source_path)?;
+            if calculated_hash != demo.hash {
+                error!(
+                    calculated = debug(calculated_hash),
+                    stored = debug(demo.hash),
+                    "hash mismatch for source"
+                );
+                return Ok(());
+            }
+
+            create_dir_all(target_path.parent().unwrap())?;
+
+            copy(&source_path, &target_path)?;
         }
-
-        let calculated_hash = hash(&source_path)?;
-        if calculated_hash != demo.hash {
-            error!(
-                calculated = debug(calculated_hash),
-                stored = debug(demo.hash),
-                "hash mismatch"
-            );
-            return Ok(());
-        }
-
-        create_dir_all(target_path.parent().unwrap())?;
-
-        copy(&source_path, &target_path)?;
 
         let calculated_hash = hash(&target_path)?;
 
@@ -161,4 +161,17 @@ fn hash<P: AsRef<Path>>(path: P) -> Result<[u8; 16], Error> {
     }
 
     Ok(hash.compute().0)
+}
+
+#[instrument(skip(demo), fields(id = demo.id, target = display(target.display())))]
+async fn re_download(client: &ApiClient, target: &Path, demo: &Demo) -> Result<(), Error> {
+    let mut data = Vec::with_capacity(demo.duration as usize / 60 * 1024);
+
+    timeout(Duration::from_secs(5 * 60), demo.save(&client, &mut data))
+        .await
+        .map_err(|_| Error::Timeout)??;
+
+    write(target, data)?;
+
+    Ok(())
 }
