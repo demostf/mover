@@ -1,5 +1,5 @@
 use demostf_client::{ApiClient, Demo, ListOrder, ListParams};
-use main_error::MainError;
+use main_error::{MainError, MainResult};
 use md5::Context;
 use std::collections::HashMap;
 use std::fs::{copy, create_dir_all, remove_file, write, File};
@@ -9,7 +9,7 @@ use std::time::Duration;
 use thiserror::Error;
 use time::OffsetDateTime;
 use tokio::time::timeout;
-use tracing::{error, info, info_span, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -70,67 +70,81 @@ async fn main() -> Result<(), MainError> {
 
         let source_path = generate_path(&source_root, name);
         let target_path = generate_path(&target_root, name);
-        let _span = info_span!(
-            "name",
-            demo = demo.id,
-            source_path = display(source_path.display()),
-            target_path = display(target_path.display()),
+
+        move_demo(
+            &client,
+            &demo,
+            source_path,
+            target_path,
+            &target_backend,
+            &api_key,
         )
-        .entered();
+        .await?;
+    }
 
-        if !source_path.is_file() {
-            warn!("source not found, re-downloading");
-            re_download(&client, &target_path, &demo).await?;
-        }
-        if target_path.is_file() {
-            warn!("target exists");
-        } else {
-            let calculated_hash = hash(&source_path)?;
-            if calculated_hash != demo.hash {
-                error!(
-                    calculated = debug(calculated_hash),
-                    stored = debug(demo.hash),
-                    "hash mismatch for source"
-                );
-                return Ok(());
-            }
+    Ok(())
+}
 
-            create_dir_all(target_path.parent().unwrap())?;
-
-            copy(&source_path, &target_path)?;
-        }
-
-        let calculated_hash = hash(&target_path)?;
-
+#[instrument(skip_all, fields(demo = demo.id, target_path = display(target_path.display()), source_path = display(source_path.display())))]
+async fn move_demo(
+    client: &ApiClient,
+    demo: &Demo,
+    source_path: PathBuf,
+    target_path: PathBuf,
+    target_backend: &str,
+    api_key: &str,
+) -> MainResult {
+    if !source_path.is_file() {
+        warn!("source not found, re-downloading");
+        re_download(&client, &target_path, &demo).await?;
+    }
+    if target_path.is_file() {
+        warn!("target exists");
+    } else {
+        let calculated_hash = hash(&source_path)?;
         if calculated_hash != demo.hash {
             error!(
                 calculated = debug(calculated_hash),
                 stored = debug(demo.hash),
-                "hash mismatch for target"
+                "hash mismatch for source"
             );
-            remove_file(&target_path)?;
             return Ok(());
         }
 
-        info!("renamed");
-        if let Err(err) = client
-            .set_url(
-                demo.id,
-                &target_backend,
-                &demo.path,
-                &demo.url,
-                calculated_hash,
-                &api_key,
-            )
-            .await
-        {
-            error!(error = display(&err), "error while setting url");
-            remove_file(&target_path)?;
-            return Err(err.into());
-        }
-        remove_file(source_path)?;
+        create_dir_all(target_path.parent().unwrap())?;
+
+        copy(&source_path, &target_path)?;
     }
 
+    let calculated_hash = hash(&target_path)?;
+
+    if calculated_hash != demo.hash {
+        error!(
+            calculated = debug(calculated_hash),
+            stored = debug(demo.hash),
+            "hash mismatch for target"
+        );
+        remove_file(&target_path)?;
+        return Ok(());
+    }
+
+    info!("renamed");
+    if let Err(err) = client
+        .set_url(
+            demo.id,
+            target_backend,
+            &demo.path,
+            &demo.url,
+            calculated_hash,
+            api_key,
+        )
+        .await
+    {
+        error!(error = display(&err), "error while setting url");
+        remove_file(&target_path)?;
+        return Err(err.into());
+    }
+    remove_file(source_path)?;
     Ok(())
 }
 
