@@ -101,16 +101,6 @@ async fn move_demo(
     if target_path.is_file() {
         warn!("target exists");
     } else {
-        let calculated_hash = hash(&source_path)?;
-        if calculated_hash != demo.hash {
-            error!(
-                calculated = debug(calculated_hash),
-                stored = debug(demo.hash),
-                "hash mismatch for source"
-            );
-            return Ok(());
-        }
-
         create_dir_all(target_path.parent().unwrap())?;
 
         copy(&source_path, &target_path)?;
@@ -119,13 +109,11 @@ async fn move_demo(
     let calculated_hash = hash(&target_path)?;
 
     if calculated_hash != demo.hash {
-        error!(
+        warn!(
             calculated = debug(calculated_hash),
             stored = debug(demo.hash),
             "hash mismatch for target"
         );
-        remove_file(&target_path)?;
-        return Ok(());
     }
 
     info!("renamed");
@@ -135,7 +123,7 @@ async fn move_demo(
             target_backend,
             &demo.path,
             &demo.url,
-            calculated_hash,
+            demo.hash,
             api_key,
         )
         .await
