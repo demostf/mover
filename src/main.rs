@@ -25,17 +25,17 @@ pub enum Error {
 async fn main() -> Result<(), MainError> {
     tracing_subscriber::fmt::init();
 
-    let mut args: HashMap<_, _> = dotenv::vars().collect();
+    let mut args: HashMap<_, _> = dotenvy::vars().collect();
 
     let source_root: PathBuf = args
         .remove("SOURCE_ROOT")
         .expect("no SOURCE_ROOT set")
-        .trim_end_matches("/")
+        .trim_end_matches('/')
         .into();
     let target_root: PathBuf = args
         .remove("TARGET_ROOT")
         .expect("no TARGET_ROOT set")
-        .trim_end_matches("/")
+        .trim_end_matches('/')
         .into();
     let api_key = args.remove("KEY").expect("no KEY set");
     let source_backend = args
@@ -96,7 +96,7 @@ async fn move_demo(
 ) -> MainResult {
     if !source_path.is_file() {
         warn!("source not found, re-downloading");
-        re_download(&client, &target_path, &demo).await?;
+        re_download(client, &target_path, demo).await?;
     }
     if target_path.is_file() {
         warn!("target exists");
@@ -136,8 +136,8 @@ async fn move_demo(
     Ok(())
 }
 
-fn generate_path(basedir: &PathBuf, name: &str) -> PathBuf {
-    let mut path = basedir.clone();
+fn generate_path(basedir: &Path, name: &str) -> PathBuf {
+    let mut path = basedir.to_path_buf();
     path.push(&name[0..2]);
     path.push(&name[2..4]);
     path.push(name);
@@ -159,7 +159,7 @@ fn hash<P: AsRef<Path>>(path: P) -> Result<[u8; 16], Error> {
         }
 
         let data = &buff[0..read];
-        hash.consume(&data);
+        hash.consume(data);
     }
 
     Ok(hash.compute().0)
@@ -169,7 +169,7 @@ fn hash<P: AsRef<Path>>(path: P) -> Result<[u8; 16], Error> {
 async fn re_download(client: &ApiClient, target: &Path, demo: &Demo) -> Result<(), Error> {
     let mut data = Vec::with_capacity(demo.duration as usize / 60 * 1024);
 
-    timeout(Duration::from_secs(5 * 60), demo.save(&client, &mut data))
+    timeout(Duration::from_secs(5 * 60), demo.save(client, &mut data))
         .await
         .map_err(|_| Error::Timeout)??;
 
