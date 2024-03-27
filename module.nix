@@ -6,10 +6,33 @@
 }:
 with lib; let
   cfg = config.services.demostf-mover;
+  format = pkgs.formats.toml {};
+  configFile = format.generate "demostf-mover.toml" {
+    api = {
+      url = cfg.api;
+      key_file = "$CREDENTIALS_DIRECTORY/api_key";
+    };
+    source = {
+      backend = cfg.sourceBackend;
+      root = cfg.source;
+    };
+    target = {
+      backend = cfg.targetBackend;
+      root = cfg.target;
+    };
+    migrate = {
+      age = cfg.age;
+    };
+  };
 in {
   options.services.demostf-mover = {
     enable = mkEnableOption "Enables the demos mover service";
 
+    api = mkOption {
+      type = types.str;
+      default = "https://api.demos.tf";
+      description = "Api endpoint to migrate demos for";
+    };
     source = mkOption {
       type = types.str;
       description = "source directory";
@@ -61,19 +84,12 @@ in {
     systemd.services.demostf-mover = {
       description = "Move demos for demos.tf";
 
-      environment = {
-        SOURCE_ROOT = cfg.source;
-        TARGET_ROOT = cfg.target;
-        SOURCE_BACKEND = cfg.sourceBackend;
-        TARGET_BACKEND = cfg.targetBackend;
-        AGE = toString cfg.age;
-        RUST_LOG = cfg.logLevel;
-      };
-
       serviceConfig = {
-        ExecStart = "${cfg.package}/bin/demostf-mover";
-        EnvironmentFile = cfg.keyFile;
+        ExecStart = "${cfg.package}/bin/demostf-mover ${configFile}";
         ReadWritePaths = [cfg.source cfg.target];
+        LoadCredential = [
+          "api_key:${cfg.keyFile}"
+        ];
         Restart = "on-failure";
         User = cfg.user;
         PrivateTmp = true;

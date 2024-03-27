@@ -1,7 +1,9 @@
+use crate::config::{Config, ConfigError};
+use clap::Parser;
 use demostf_client::{ApiClient, Demo, ListOrder, ListParams};
 use main_error::{MainError, MainResult};
 use md5::Context;
-use std::collections::HashMap;
+use secretfile::{load, SecretError};
 use std::fs::{copy, create_dir_all, remove_file, write, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -11,6 +13,8 @@ use time::OffsetDateTime;
 use tokio::time::timeout;
 use tracing::{error, info, instrument, warn};
 
+mod config;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Request failed: {0}")]
@@ -19,36 +23,31 @@ pub enum Error {
     Api(#[from] demostf_client::Error),
     #[error("Backup timed out")]
     Timeout,
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error(transparent)]
+    Secret(#[from] SecretError),
+}
+
+#[derive(Debug, Parser)]
+struct Args {
+    /// Config file
+    config: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), MainError> {
     tracing_subscriber::fmt::init();
 
-    let mut args: HashMap<_, _> = dotenvy::vars().collect();
+    let args = Args::parse();
+    let config = Config::load(args.config)?;
 
-    let source_root: PathBuf = args
-        .remove("SOURCE_ROOT")
-        .expect("no SOURCE_ROOT set")
-        .trim_end_matches('/')
-        .into();
-    let target_root: PathBuf = args
-        .remove("TARGET_ROOT")
-        .expect("no TARGET_ROOT set")
-        .trim_end_matches('/')
-        .into();
-    let api_key = args.remove("KEY").expect("no KEY set");
-    let source_backend = args
-        .remove("SOURCE_BACKEND")
-        .expect("no SOURCE_BACKEND set");
-    let target_backend = args
-        .remove("TARGET_BACKEND")
-        .expect("no TARGET_BACKEND set");
-    let age: u64 = args
-        .get("AGE")
-        .expect("no AGE set")
-        .parse()
-        .expect("invalid AGE");
+    let source_root: PathBuf = config.source.root.trim_end_matches('/').into();
+    let target_root: PathBuf = config.target.root.trim_end_matches('/').into();
+    let api_key = load(&config.api.key_file)?;
+    let source_backend = config.source.backend;
+    let target_backend = config.target.backend;
+    let age = config.migrate.age;
 
     let cutoff = OffsetDateTime::now_utc() - Duration::from_secs(age);
     info!(cutoff = display(cutoff), "starting move");

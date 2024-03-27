@@ -1,0 +1,14 @@
+[source]
+root = "/data/demos" # root directory of the source demo storage
+backend = "freezer" # name of the source demo storage
+
+[target]
+root = "/data2/demos" # root directory of the target demo storage
+backend = "freezer2" # name of the target demo storage
+
+[api]
+url = "https://api.demos.tf" # optional, base url of the api
+key_file = "" # file containing the api key
+
+[migrate]
+age = 172800 # age of demos in secconds to migrate
